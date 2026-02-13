@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   claude-review:
-    name: AI Code Review by Claude
+    name: AI Code Review
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -23,71 +23,39 @@ jobs:
           fetch-depth: 0
 
       - name: Get PR diff
-        id: diff
         run: |
           git fetch origin ${{ github.event.pull_request.base.ref }}
-          DIFF=$(git diff origin/${{ github.event.pull_request.base.ref }}...HEAD)
-          
-          # Save diff to file
-          echo "$DIFF" > pr_diff.txt
-          
-          # Get PR details
-          echo "PR_TITLE=${{ github.event.pull_request.title }}" >> $GITHUB_ENV
-          echo "PR_BODY=${{ github.event.pull_request.body }}" >> $GITHUB_ENV
+          git diff origin/${{ github.event.pull_request.base.ref }}...HEAD > pr_diff.txt
+          git diff --name-only origin/${{ github.event.pull_request.base.ref }}...HEAD > changed_files.txt
 
-      - name: Get changed files
-        id: files
+      - name: Review with Claude
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          git fetch origin ${{ github.event.pull_request.base.ref }}
-          FILES=$(git diff --name-only origin/${{ github.event.pull_request.base.ref }}...HEAD | head -20)
-          echo "Changed files:"
-          echo "$FILES"
-          echo "$FILES" > changed_files.txt
-
-      - name: Review PR with Claude
-        id: claude
-        run: |
-          # Read diff and changed files
-          DIFF=$(cat pr_diff.txt | head -c 50000)  # Limit to 50k chars
-          FILES=$(cat changed_files.txt)
+          # Prepare data
+          DIFF=$(cat pr_diff.txt | head -c 50000 | base64 -w 0)
+          FILES=$(cat changed_files.txt | base64 -w 0)
           
-          # Create the prompt
-          cat > prompt.json << 'EOF'
+          # Create request
+          cat > request.json << EOF
           {
             "model": "claude-sonnet-4-20250514",
             "max_tokens": 4096,
-            "messages": [
-              {
-                "role": "user",
-                "content": "You are an expert code reviewer. Review this Pull Request and provide constructive feedback.\n\nPR Title: ${{ env.PR_TITLE }}\n\nPR Description:\n${{ env.PR_BODY }}\n\nChanged Files:\n__FILES__\n\nCode Diff:\n```\n__DIFF__\n```\n\nProvide a review covering:\n1. Code Quality: Style, readability, best practices\n2. Potential Bugs: Logic errors, edge cases\n3. Security: Vulnerabilities, unsafe patterns\n4. Performance: Optimization opportunities\n5. Testing: Missing tests or test improvements\n6. Documentation: Comments, README updates needed\n\nFormat your response as:\n## 🤖 Claude AI Code Review\n\n### ✅ Strengths\n[List good aspects]\n\n### ⚠️ Issues Found\n[List issues with severity: 🔴 Critical, 🟡 Warning, 🔵 Info]\n\n### 💡 Suggestions\n[List improvements]\n\n### 📝 Summary\n[Overall assessment]"
-              }
-            ]
+            "messages": [{
+              "role": "user",
+              "content": "Review this PR. Title: ${{ github.event.pull_request.title }}\n\nFiles: $(echo $FILES | base64 -d)\n\nDiff: $(echo $DIFF | base64 -d)\n\nProvide brief review with:\n## 🤖 Claude AI Review\n### ✅ Good\n### ⚠️ Issues\n### 💡 Suggestions"
+            }]
           }
           EOF
           
-          # Replace placeholders
-          sed -i "s|__FILES__|$FILES|g" prompt.json
-          sed -i "s|__DIFF__|$DIFF|g" prompt.json
-          
-          # Call Claude API
-          RESPONSE=$(curl -s https://api.anthropic.com/v1/messages \
+          # Call API
+          curl -s https://api.anthropic.com/v1/messages \
             -H "content-type: application/json" \
-            -H "x-api-key: ${{ secrets.ANTHROPIC_API_KEY }}" \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
             -H "anthropic-version: 2023-06-01" \
-            -d @prompt.json)
-          
-          # Extract the review text
-          REVIEW=$(echo "$RESPONSE" | jq -r '.content[0].text')
-          
-          # Save review to file
-          echo "$REVIEW" > review.md
-          
-          # Also save to output for GitHub comment
-          echo "review<<EOF" >> $GITHUB_OUTPUT
-          echo "$REVIEW" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+            -d @request.json | jq -r '.content[0].text' > review.md || echo "Review failed" > review.md
 
-      - name: Post review as PR comment
+      - name: Post review
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -95,7 +63,6 @@ jobs:
             const fs = require('fs');
             const review = fs.readFileSync('review.md', 'utf8');
             
-            // Post the review
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -103,13 +70,10 @@ jobs:
               body: review
             });
 
-      - name: Upload review artifact
+      - name: Upload artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: claude-review
-          path: |
-            review.md
-            pr_diff.txt
-            changed_files.txt
-          retention-days: 30
+          path: review.md
+          retention-days: 7
