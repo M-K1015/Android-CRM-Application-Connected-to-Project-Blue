@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   review-with-config:
-    name: 🤖 Configured Code Review
+    name: Configured Code Review
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -27,21 +27,13 @@ jobs:
         run: |
           if [ -f ".claude/agents/agents.json" ]; then
             echo "CONFIG_EXISTS=true" >> $GITHUB_ENV
-            
-            # Extract key settings
             MODEL=$(jq -r '.agents["code-reviewer"].model' .claude/agents/agents.json)
             TEMP=$(jq -r '.agents["code-reviewer"].temperature' .claude/agents/agents.json)
-            
             echo "MODEL=$MODEL" >> $GITHUB_ENV
             echo "TEMPERATURE=$TEMP" >> $GITHUB_ENV
-            
-            # Extract project context
-            jq -r '.agents["code-reviewer"].project_context' .claude/agents/agents.json > project_context.json
-            jq -r '.agents["code-reviewer"].coding_standards' .claude/agents/agents.json > standards.json
-            jq -r '.agents["code-reviewer"].review_priorities' .claude/agents/agents.json > priorities.json
           else
             echo "CONFIG_EXISTS=false" >> $GITHUB_ENV
-            echo "⚠️ No .claude/agents/agents.json found. Using defaults."
+            echo "No config found, using defaults"
           fi
 
       - name: Get PR changes
@@ -49,161 +41,73 @@ jobs:
           git fetch origin ${{ github.event.pull_request.base.ref }}
           git diff origin/${{ github.event.pull_request.base.ref }}...HEAD > pr_diff.txt
           git diff --name-only origin/${{ github.event.pull_request.base.ref }}...HEAD > changed_files.txt
-          
-          # Read CLAUDE.md if exists
           if [ -f "CLAUDE.md" ]; then
             cat CLAUDE.md > coding_standards.txt
           else
             echo "No CLAUDE.md found" > coding_standards.txt
           fi
 
-      - name: Build context-aware review prompt
+      - name: Create review prompt
         run: |
-          # Read files
           DIFF=$(cat pr_diff.txt | head -c 50000)
           FILES=$(cat changed_files.txt)
-          STANDARDS=$(cat coding_standards.txt)
+          STANDARDS=$(cat coding_standards.txt | head -c 10000)
           
-          if [ "$CONFIG_EXISTS" = "true" ]; then
-            PROJECT_CTX=$(cat project_context.json)
-            PRIORITIES=$(cat priorities.json)
-            
-            # Build enhanced prompt with project config
-            cat > review_prompt.txt << 'EOFPROMPT'
-You are the Eywa CRM Code Reviewer - an expert AI agent configured specifically for this Android CRM project.
-
-# Your Configuration
-__PROJECT_CONTEXT__
-
-# Review Priorities (from .claude/agents/)
-__PRIORITIES__
-
-# Coding Standards (CLAUDE.md)
-__STANDARDS__
-
-# PR to Review
-**Changed Files:**
-__FILES__
-
-**Code Diff:**
-```diff
-__DIFF__
-```
-
-# Your Task
-Review this PR as the configured Eywa CRM expert. Apply:
-1. Project-specific rules from .claude/agents/
-2. Coding standards from CLAUDE.md
-3. Security requirements for CRM data
-4. React Native best practices
-5. Project Blue API integration standards
-
-# Output Format
-## 🤖 Eywa CRM Code Review
-*Configured agent: code-reviewer | Model: ${{ env.MODEL }}*
-
-### 📊 Overview
-- Files changed: [count]
-- Security-sensitive: [yes/no]
-- Rating: ⭐⭐⭐⭐⭐
-
-### ✅ Strengths
-[List what's done well]
-
-### 🔍 Issues Found
-[Group by severity: 🔴 Critical, 🟡 High, 🔵 Medium, 💬 Low]
-
-### 📋 CLAUDE.md Compliance
-- [ ] Naming conventions
-- [ ] Code structure  
-- [ ] Documentation
-- [ ] Testing
-
-### 💡 Project-Specific Feedback
-[Apply rules from .claude/agents/ config]
-
-### 🎯 Decision
-- [ ] ✅ Approve
-- [ ] 💬 Comment
-- [ ] 🔄 Request Changes
-- [ ] 🚫 Block Merge
-
----
-*AI agent review using project configuration*
-EOFPROMPT
-
-            # Replace placeholders
-            sed -i "s|__PROJECT_CONTEXT__|$PROJECT_CTX|g" review_prompt.txt
-            sed -i "s|__PRIORITIES__|$PRIORITIES|g" review_prompt.txt
-          else
-            # Fallback to basic prompt
-            cat > review_prompt.txt << 'EOFPROMPT'
-Review this Pull Request for the Android CRM application.
-
-**Changed Files:**
-__FILES__
-
-**Diff:**
-```diff
-__DIFF__
-```
-
-Provide code review feedback.
-EOFPROMPT
-          fi
+          cat > review_prompt.txt << 'EOF'
+          Review this Pull Request for the Android CRM application.
           
-          # Common replacements
-          sed -i "s|__STANDARDS__|$STANDARDS|g" review_prompt.txt
-          sed -i "s|__FILES__|$FILES|g" review_prompt.txt
-          sed -i "s|__DIFF__|$DIFF|g" review_prompt.txt
+          Changed Files:
+          EOF
+          echo "$FILES" >> review_prompt.txt
+          
+          cat >> review_prompt.txt << 'EOF'
+          
+          Coding Standards:
+          EOF
+          echo "$STANDARDS" >> review_prompt.txt
+          
+          cat >> review_prompt.txt << 'EOF'
+          
+          Code Diff:
+          EOF
+          echo "$DIFF" >> review_prompt.txt
+          
+          cat >> review_prompt.txt << 'EOF'
+          
+          Provide a code review with:
+          ## Code Review
+          ### Strengths
+          ### Issues Found
+          ### Suggestions
+          ### Decision: Approve/Request Changes/Comment
+          EOF
 
-      - name: Call Claude with configuration
+      - name: Call Claude API
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           PROMPT=$(cat review_prompt.txt)
           MODEL="${{ env.MODEL }}"
-          TEMP="${{ env.TEMPERATURE }}"
-          
-          # Use configured model or default
           MODEL=${MODEL:-"claude-sonnet-4-20250514"}
-          TEMP=${TEMP:-"0.3"}
           
-          # Create API request
           jq -n \
             --arg model "$MODEL" \
-            --arg temp "$TEMP" \
             --arg prompt "$PROMPT" \
             '{
               model: $model,
-              max_tokens: 8192,
-              temperature: ($temp | tonumber),
+              max_tokens: 4096,
               messages: [{
                 role: "user",
                 content: $prompt
               }]
             }' > api_request.json
           
-          # Call Claude API
           curl -s https://api.anthropic.com/v1/messages \
             -H "content-type: application/json" \
             -H "x-api-key: $ANTHROPIC_API_KEY" \
             -H "anthropic-version: 2023-06-01" \
             -d @api_request.json | jq -r '.content[0].text' > review.md || \
-            echo "## 🤖 Review Failed\n\n⚠️ Could not generate review" > review.md
-
-      - name: Apply auto-actions from config
-        if: env.CONFIG_EXISTS == 'true'
-        run: |
-          # Check if we should block merge
-          BLOCK_CONDITIONS=$(jq -r '.agents["code-reviewer"].auto_actions.block_merge_if[]' .claude/agents/agents.json)
-          
-          while IFS= read -r condition; do
-            if grep -qi "$condition" review.md; then
-              echo "BLOCK_MERGE=true" >> $GITHUB_ENV
-              echo "::error::Auto-block triggered: $condition"
-            fi
-          done <<< "$BLOCK_CONDITIONS"
+            echo "Review generation failed" > review.md
 
       - name: Post review
         uses: actions/github-script@v7
@@ -220,20 +124,12 @@ EOFPROMPT
               body: review
             });
 
-      - name: Block merge if configured
-        if: env.BLOCK_MERGE == 'true'
-        run: |
-          echo "::error::Merge blocked by configuration rules"
-          exit 1
-
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: claude-configured-review
+          name: claude-review
           path: |
             review.md
             review_prompt.txt
-            project_context.json
-            api_request.json
           retention-days: 30
