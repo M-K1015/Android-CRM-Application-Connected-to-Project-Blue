@@ -1,0 +1,270 @@
+name: Security-Focused Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      # Authentication & Authorization
+      - '**/auth/**'
+      - '**/login/**'
+      - '**/authentication/**'
+      - '**/authorization/**'
+      - '**/permissions/**'
+      
+      # API & Networking
+      - '**/api/**'
+      - '**/services/**'
+      - '**/network/**'
+      - '**/http/**'
+      
+      # Database & Storage
+      - '**/database/**'
+      - '**/db/**'
+      - '**/models/**'
+      - '**/entities/**'
+      - '**/dao/**'
+      
+      # Security-Sensitive Files
+      - '**/security/**'
+      - '**/crypto/**'
+      - '**/encryption/**'
+      - '**/*Secret*'
+      - '**/*Password*'
+      - '**/*Token*'
+      - '**/*Key*'
+      
+      # Configuration
+      - '**/*.properties'
+      - '**/*.config'
+      - '**/*.env*'
+      - '**/AndroidManifest.xml'
+      - '**/build.gradle*'
+      - '**/proguard-rules.pro'
+      
+      # User Data Handling
+      - '**/user/**'
+      - '**/profile/**'
+      - '**/account/**'
+      - '**/payment/**'
+      - '**/billing/**'
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  security-events: write
+
+jobs:
+  security-review:
+    name: 🔒 Deep Security Review
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Identify security-sensitive changes
+        id: identify
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }}
+          
+          # Get all changed files
+          git diff --name-only origin/${{ github.event.pull_request.base.ref }}...HEAD > all_changed.txt
+          
+          # Categorize files
+          touch auth_files.txt api_files.txt db_files.txt config_files.txt sensitive_files.txt
+          
+          while IFS= read -r file; do
+            case "$file" in
+              *auth*|*login*|*authentication*|*authorization*|*permission*)
+                echo "$file" >> auth_files.txt
+                ;;
+              *api*|*service*|*network*|*http*)
+                echo "$file" >> api_files.txt
+                ;;
+              *database*|*db*|*model*|*entity*|*dao*)
+                echo "$file" >> db_files.txt
+                ;;
+              *.properties|*.config|*.env*|*AndroidManifest.xml|*build.gradle*|*proguard*)
+                echo "$file" >> config_files.txt
+                ;;
+              *Secret*|*Password*|*Token*|*Key*|*crypto*|*encryption*)
+                echo "$file" >> sensitive_files.txt
+                ;;
+            esac
+          done < all_changed.txt
+          
+          # Count files in each category
+          AUTH_COUNT=$(wc -l < auth_files.txt)
+          API_COUNT=$(wc -l < api_files.txt)
+          DB_COUNT=$(wc -l < db_files.txt)
+          CONFIG_COUNT=$(wc -l < config_files.txt)
+          SENSITIVE_COUNT=$(wc -l < sensitive_files.txt)
+          
+          echo "AUTH_FILES=$AUTH_COUNT" >> $GITHUB_ENV
+          echo "API_FILES=$API_COUNT" >> $GITHUB_ENV
+          echo "DB_FILES=$DB_COUNT" >> $GITHUB_ENV
+          echo "CONFIG_FILES=$CONFIG_COUNT" >> $GITHUB_ENV
+          echo "SENSITIVE_FILES=$SENSITIVE_COUNT" >> $GITHUB_ENV
+          
+          # Determine security level
+          TOTAL=$((AUTH_COUNT + API_COUNT + DB_COUNT + CONFIG_COUNT + SENSITIVE_COUNT))
+          if [ $TOTAL -gt 10 ]; then
+            echo "SECURITY_LEVEL=critical" >> $GITHUB_ENV
+          elif [ $TOTAL -gt 5 ]; then
+            echo "SECURITY_LEVEL=high" >> $GITHUB_ENV
+          else
+            echo "SECURITY_LEVEL=medium" >> $GITHUB_ENV
+          fi
+
+      - name: Get detailed diff for security files
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }}
+          git diff origin/${{ github.event.pull_request.base.ref }}...HEAD > full_diff.txt
+          
+          # Extract relevant sections
+          head -c 100000 full_diff.txt > security_diff.txt
+
+      - name: Security-focused Claude review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          # Read files
+          DIFF=$(cat security_diff.txt)
+          AUTH_FILES=$(cat auth_files.txt 2>/dev/null || echo "None")
+          API_FILES=$(cat api_files.txt 2>/dev/null || echo "None")
+          DB_FILES=$(cat db_files.txt 2>/dev/null || echo "None")
+          CONFIG_FILES=$(cat config_files.txt 2>/dev/null || echo "None")
+          SENSITIVE_FILES=$(cat sensitive_files.txt 2>/dev/null || echo "None")
+          
+          # Create focused security review prompt
+          cat > security_request.json << 'EOF'
+          {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 8192,
+            "temperature": 0.2,
+            "messages": [{
+              "role": "user",
+              "content": "You are a security expert reviewing a Pull Request for an Android CRM application. This PR modifies security-sensitive code.\n\n# Security Context\n**Security Level:** ${{ env.SECURITY_LEVEL }}\n**Authentication Files:** AUTH_FILES_PLACEHOLDER\n**API Files:** API_FILES_PLACEHOLDER\n**Database Files:** DB_FILES_PLACEHOLDER\n**Config Files:** CONFIG_FILES_PLACEHOLDER\n**Sensitive Files:** SENSITIVE_FILES_PLACEHOLDER\n\n# Code Changes\n```diff\nDIFF_PLACEHOLDER\n```\n\n# Required Security Analysis\n\nPerform a DEEP security review focusing on:\n\n## 1. Authentication & Authorization\n- Session management vulnerabilities\n- Token handling and storage\n- Password policies and hashing\n- OAuth/SSO implementation\n- Permission checks and access control\n\n## 2. Data Protection\n- Sensitive data exposure\n- Encryption at rest and in transit\n- Database security (SQL injection, etc.)\n- API key management\n- PII/GDPR compliance\n\n## 3. Input Validation\n- Injection vulnerabilities (SQL, XSS, etc.)\n- Parameter tampering\n- File upload security\n- Input sanitization\n\n## 4. Network Security\n- API endpoint security\n- HTTPS/TLS implementation\n- Certificate pinning\n- Man-in-the-middle prevention\n\n## 5. Mobile-Specific\n- Root/jailbreak detection\n- Secure storage (Keychain/Keystore)\n- WebView security\n- Deep linking vulnerabilities\n\n## 6. Configuration\n- Hardcoded secrets\n- Debug flags in production\n- Insecure permissions\n- ProGuard/R8 rules\n\n# Output Format\n\n## 🔒 Security-Focused Code Review\n\n### 🎯 Security Level: [Critical/High/Medium]\n\n### 🚨 CRITICAL Security Issues\n**[Issue Title]**\n- **Severity:** 🔴 Critical\n- **Location:** `file:line`\n- **Vulnerability:** [Type]\n- **Impact:** [Detailed impact]\n- **Exploit Scenario:** [How it could be exploited]\n- **Fix:** [Specific remediation steps]\n\n### ⚠️ High Priority Warnings\n**[Issue Title]**\n- **Severity:** 🟠 High\n- **Location:** `file:line`\n- **Issue:** [Description]\n- **Risk:** [Potential risk]\n- **Recommendation:** [How to fix]\n\n### 🔍 Medium Priority Concerns\n**[Issue Title]**\n- **Severity:** 🟡 Medium\n- **Location:** `file:line`\n- **Concern:** [Description]\n- **Suggestion:** [Improvement]\n\n### ✅ Security Best Practices Followed\n- [List good security practices found]\n\n### 📋 Security Checklist\n- [ ] Authentication properly implemented\n- [ ] Authorization checks in place\n- [ ] Input validation complete\n- [ ] Sensitive data encrypted\n- [ ] API keys secured\n- [ ] SQL injection prevented\n- [ ] XSS prevention implemented\n- [ ] HTTPS enforced\n- [ ] Secrets not hardcoded\n\n### 🛡️ Recommendations\n1. **Immediate Actions** (must fix before merge)\n   - [Critical fixes]\n\n2. **Short-term Improvements** (fix within sprint)\n   - [High priority items]\n\n3. **Long-term Enhancements**\n   - [Architecture improvements]\n\n### 🎯 Merge Decision\n- [ ] 🚫 **BLOCK MERGE** - Critical security issues found\n- [ ] ⚠️  **REQUEST CHANGES** - High priority issues must be addressed\n- [ ] ✅ **APPROVE WITH COMMENTS** - Minor concerns only\n- [ ] ✅ **APPROVE** - No security issues found\n\n### 📊 Security Score: X/10\n\n---\n*Security review by Claude AI (Sonnet 4) - Security Level: ${{ env.SECURITY_LEVEL }}*\n*Files reviewed: AUTH: ${{ env.AUTH_FILES }}, API: ${{ env.API_FILES }}, DB: ${{ env.DB_FILES }}*"
+            }]
+          }
+          EOF
+          
+          # Replace placeholders (using Python for better string handling)
+          python3 << 'PYTHON_SCRIPT'
+          import json
+          import os
+          
+          with open('security_request.json', 'r') as f:
+              data = json.load(f)
+          
+          # Read files
+          with open('security_diff.txt', 'r') as f:
+              diff = f.read()
+          with open('auth_files.txt', 'r') as f:
+              auth = f.read().strip() or "None"
+          with open('api_files.txt', 'r') as f:
+              api = f.read().strip() or "None"
+          with open('db_files.txt', 'r') as f:
+              db = f.read().strip() or "None"
+          with open('config_files.txt', 'r') as f:
+              config = f.read().strip() or "None"
+          with open('sensitive_files.txt', 'r') as f:
+              sensitive = f.read().strip() or "None"
+          
+          # Replace in content
+          content = data['messages'][0]['content']
+          content = content.replace('DIFF_PLACEHOLDER', diff[:50000])
+          content = content.replace('AUTH_FILES_PLACEHOLDER', auth)
+          content = content.replace('API_FILES_PLACEHOLDER', api)
+          content = content.replace('DB_FILES_PLACEHOLDER', db)
+          content = content.replace('CONFIG_FILES_PLACEHOLDER', config)
+          content = content.replace('SENSITIVE_FILES_PLACEHOLDER', sensitive)
+          
+          data['messages'][0]['content'] = content
+          
+          with open('security_request_final.json', 'w') as f:
+              json.dump(data, f)
+          PYTHON_SCRIPT
+          
+          # Call Claude API
+          curl -s https://api.anthropic.com/v1/messages \
+            -H "content-type: application/json" \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -d @security_request_final.json | jq -r '.content[0].text' > security_review.md || \
+            echo "## 🔒 Security Review\n\n⚠️ Review generation failed" > security_review.md
+
+      - name: Add security labels
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const review = fs.readFileSync('security_review.md', 'utf8');
+            
+            let labels = ['security-review'];
+            
+            // Add severity labels
+            if (review.includes('🚫 **BLOCK MERGE**') || review.includes('🔴 Critical')) {
+              labels.push('security-critical');
+              labels.push('do-not-merge');
+            } else if (review.includes('⚠️  **REQUEST CHANGES**')) {
+              labels.push('security-high');
+              labels.push('needs-security-fixes');
+            } else if (review.includes('🟡 Medium')) {
+              labels.push('security-medium');
+            }
+            
+            // Add category labels
+            if ('${{ env.AUTH_FILES }}' !== '0') labels.push('security-auth');
+            if ('${{ env.API_FILES }}' !== '0') labels.push('security-api');
+            if ('${{ env.DB_FILES }}' !== '0') labels.push('security-db');
+            
+            // Add labels
+            try {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: labels
+              });
+            } catch (error) {
+              console.log('Label creation failed:', error.message);
+            }
+
+      - name: Post security review
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const review = fs.readFileSync('security_review.md', 'utf8');
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: review
+            });
+
+      - name: Block merge if critical issues
+        run: |
+          if grep -q "🚫 \*\*BLOCK MERGE\*\*" security_review.md; then
+            echo "::error::Critical security issues found. Merge blocked."
+            exit 1
+          fi
+
+      - name: Upload security artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-review-${{ github.event.pull_request.number }}
+          path: |
+            security_review.md
+            security_diff.txt
+            *_files.txt
+          retention-days: 90
