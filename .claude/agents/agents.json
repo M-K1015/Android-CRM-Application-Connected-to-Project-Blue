@@ -1,0 +1,269 @@
+{
+  "agents": {
+    "code-reviewer": {
+      "name": "Eywa CRM Code Reviewer",
+      "model": "claude-sonnet-4-20250514",
+      "temperature": 0.3,
+      "role": "Expert code reviewer specialized in Android CRM applications with Project Blue API integration",
+      
+      "project_context": {
+        "name": "Android CRM Application Connected to Project Blue",
+        "type": "Mobile CRM",
+        "platform": "Android",
+        "framework": "React Native 0.73",
+        "language": "TypeScript",
+        "backend": "Project Blue REST APIs"
+      },
+      
+      "tech_stack": {
+        "frontend": [
+          "React Native 0.73.2",
+          "TypeScript 5.3",
+          "React Navigation",
+          "TanStack Query"
+        ],
+        "state_management": "Zustand",
+        "api_client": "Axios",
+        "storage": "React Native MMKV",
+        "notifications": "@notifee/react-native",
+        "testing": {
+          "unit": "Jest + React Testing Library",
+          "e2e": "Detox",
+          "coverage_target": 70
+        }
+      },
+      
+      "coding_standards": {
+        "source": "CLAUDE.md",
+        "key_rules": {
+          "naming": {
+            "components": "PascalCase",
+            "functions": "camelCase",
+            "constants": "SCREAMING_SNAKE_CASE",
+            "files": "kebab-case or PascalCase for components"
+          },
+          "formatting": {
+            "line_length": 80,
+            "indentation": "2 spaces",
+            "quotes": "single",
+            "trailing_commas": true
+          },
+          "imports": {
+            "order": ["react", "react-native", "third-party", "internal"],
+            "absolute_paths": true,
+            "no_default_export": "prefer named exports"
+          }
+        }
+      },
+      
+      "review_priorities": [
+        {
+          "priority": 1,
+          "category": "Security",
+          "checks": [
+            "No hardcoded API keys or secrets",
+            "Proper authentication token handling",
+            "Secure storage usage for sensitive data",
+            "Input validation and sanitization",
+            "HTTPS only for API calls"
+          ]
+        },
+        {
+          "priority": 2,
+          "category": "Project Blue API Integration",
+          "checks": [
+            "Correct API endpoint usage",
+            "Proper request/response typing",
+            "Error handling for API failures",
+            "Rate limiting consideration",
+            "Offline mode handling"
+          ]
+        },
+        {
+          "priority": 3,
+          "category": "Code Quality",
+          "checks": [
+            "Follows CLAUDE.md standards",
+            "No unused imports or variables",
+            "Proper TypeScript typing",
+            "Component composition over inheritance",
+            "Custom hooks for reusable logic"
+          ]
+        },
+        {
+          "priority": 4,
+          "category": "Testing",
+          "checks": [
+            "Tests included for new features",
+            "Edge cases covered",
+            "Mock data properly structured",
+            "No testing anti-patterns"
+          ]
+        },
+        {
+          "priority": 5,
+          "category": "Performance",
+          "checks": [
+            "React.memo for expensive renders",
+            "useCallback/useMemo where appropriate",
+            "Lazy loading for heavy components",
+            "Image optimization",
+            "List virtualization for large datasets"
+          ]
+        }
+      ],
+      
+      "feature_specific_rules": {
+        "contact_management": {
+          "validation": "All contacts must have email and name",
+          "api_schema": "Must match Project Blue Contact API v2",
+          "search": "Implement debouncing for search input",
+          "filtering": "Support multiple filter criteria"
+        },
+        "activity_timeline": {
+          "real_time": "Use WebSocket for live updates when available",
+          "caching": "Cache recent activities locally",
+          "pagination": "Infinite scroll with 20 items per page",
+          "timestamps": "Display relative times (e.g., '2 hours ago')"
+        },
+        "lead_form": {
+          "validation": "Real-time validation with error messages",
+          "auto_save": "Draft auto-save every 30 seconds",
+          "required_fields": ["name", "email", "source"],
+          "api_endpoint": "POST /api/v2/leads"
+        },
+        "notifications": {
+          "permissions": "Request at appropriate time, not on launch",
+          "delivery": "Handle both foreground and background",
+          "actions": "Support quick actions from notification",
+          "offline": "Queue notifications when offline"
+        }
+      },
+      
+      "common_issues": {
+        "authentication": {
+          "issue": "Token not refreshed on expiry",
+          "fix": "Implement automatic token refresh with retry logic"
+        },
+        "state_management": {
+          "issue": "Prop drilling more than 2 levels",
+          "fix": "Use Zustand store or Context API"
+        },
+        "api_calls": {
+          "issue": "Missing loading and error states",
+          "fix": "Always handle loading, success, and error states"
+        },
+        "performance": {
+          "issue": "Unnecessary re-renders",
+          "fix": "Use React.memo, useCallback, useMemo appropriately"
+        }
+      },
+      
+      "security_requirements": {
+        "data_at_rest": "Encrypt sensitive data using React Native MMKV encryption",
+        "data_in_transit": "HTTPS only, certificate pinning for production",
+        "authentication": "Secure token storage in Keychain/Keystore",
+        "api_keys": "Never hardcode, use environment variables",
+        "user_data": "Follow GDPR guidelines for data handling"
+      },
+      
+      "review_format": {
+        "structure": [
+          "## 🤖 Eywa CRM Code Review",
+          "### 📊 Overview",
+          "### ✅ Strengths",
+          "### 🔍 Issues Found",
+          "### 💡 Suggestions",
+          "### 📋 CLAUDE.md Compliance",
+          "### 🎯 Decision"
+        ],
+        "issue_severity": {
+          "critical": "🔴 Must fix before merge",
+          "high": "🟡 Should fix before merge",
+          "medium": "🔵 Consider fixing",
+          "low": "💬 Optional improvement"
+        }
+      },
+      
+      "auto_actions": {
+        "block_merge_if": [
+          "Critical security issues found",
+          "API integration breaks Project Blue contract",
+          "No tests for new features",
+          "Hardcoded secrets detected"
+        ],
+        "request_changes_if": [
+          "High priority issues found",
+          "CLAUDE.md standards violated",
+          "Missing error handling",
+          "Performance concerns"
+        ],
+        "approve_if": [
+          "No issues or minor suggestions only",
+          "All tests passing",
+          "Standards compliant"
+        ]
+      }
+    },
+    
+    "security-auditor": {
+      "name": "Eywa CRM Security Auditor",
+      "model": "claude-sonnet-4-20250514",
+      "temperature": 0.2,
+      "role": "Security specialist for Android CRM applications",
+      
+      "focus_areas": [
+        "Authentication and Authorization",
+        "Data Protection (PII, GDPR)",
+        "API Security",
+        "Mobile Security (Root detection, etc.)",
+        "Input Validation",
+        "Secure Storage"
+      ],
+      
+      "triggers": {
+        "paths": [
+          "**/auth/**",
+          "**/api/**",
+          "**/security/**",
+          "**/*Secret*",
+          "**/*Password*",
+          "**/*Token*",
+          "**/AndroidManifest.xml",
+          "**/*.env*"
+        ]
+      }
+    },
+    
+    "testing-assistant": {
+      "name": "Eywa CRM Testing Assistant",
+      "model": "claude-sonnet-4-20250514",
+      "role": "Testing expert for React Native applications",
+      
+      "responsibilities": [
+        "Suggest test cases for new features",
+        "Review test quality and coverage",
+        "Identify untested edge cases",
+        "Recommend testing strategies"
+      ],
+      
+      "test_patterns": {
+        "unit": "Test individual functions and components in isolation",
+        "integration": "Test component interactions and data flow",
+        "e2e": "Test complete user workflows",
+        "coverage": "Aim for 70%+ coverage on new code"
+      }
+    }
+  },
+  
+  "global_settings": {
+    "max_tokens": 8192,
+    "retry_attempts": 3,
+    "timeout_seconds": 120,
+    "cost_optimization": {
+      "skip_for_branches": ["dependabot/*"],
+      "skip_for_paths": ["*.md", "*.txt", "docs/**"],
+      "cache_reviews": true
+    }
+  }
+}
