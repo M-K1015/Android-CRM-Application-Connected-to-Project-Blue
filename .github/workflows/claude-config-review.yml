@@ -1,0 +1,135 @@
+name: Claude Code Review with Config
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main, develop]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  review-with-config:
+    name: Configured Code Review
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Load Claude agent configuration
+        id: load-config
+        run: |
+          if [ -f ".claude/agents/agents.json" ]; then
+            echo "CONFIG_EXISTS=true" >> $GITHUB_ENV
+            MODEL=$(jq -r '.agents["code-reviewer"].model' .claude/agents/agents.json)
+            TEMP=$(jq -r '.agents["code-reviewer"].temperature' .claude/agents/agents.json)
+            echo "MODEL=$MODEL" >> $GITHUB_ENV
+            echo "TEMPERATURE=$TEMP" >> $GITHUB_ENV
+          else
+            echo "CONFIG_EXISTS=false" >> $GITHUB_ENV
+            echo "No config found, using defaults"
+          fi
+
+      - name: Get PR changes
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }}
+          git diff origin/${{ github.event.pull_request.base.ref }}...HEAD > pr_diff.txt
+          git diff --name-only origin/${{ github.event.pull_request.base.ref }}...HEAD > changed_files.txt
+          if [ -f "CLAUDE.md" ]; then
+            cat CLAUDE.md > coding_standards.txt
+          else
+            echo "No CLAUDE.md found" > coding_standards.txt
+          fi
+
+      - name: Create review prompt
+        run: |
+          DIFF=$(cat pr_diff.txt | head -c 50000)
+          FILES=$(cat changed_files.txt)
+          STANDARDS=$(cat coding_standards.txt | head -c 10000)
+          
+          cat > review_prompt.txt << 'EOF'
+          Review this Pull Request for the Android CRM application.
+          
+          Changed Files:
+          EOF
+          echo "$FILES" >> review_prompt.txt
+          
+          cat >> review_prompt.txt << 'EOF'
+          
+          Coding Standards:
+          EOF
+          echo "$STANDARDS" >> review_prompt.txt
+          
+          cat >> review_prompt.txt << 'EOF'
+          
+          Code Diff:
+          EOF
+          echo "$DIFF" >> review_prompt.txt
+          
+          cat >> review_prompt.txt << 'EOF'
+          
+          Provide a code review with:
+          ## Code Review
+          ### Strengths
+          ### Issues Found
+          ### Suggestions
+          ### Decision: Approve/Request Changes/Comment
+          EOF
+
+      - name: Call Claude API
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          PROMPT=$(cat review_prompt.txt)
+          MODEL="${{ env.MODEL }}"
+          MODEL=${MODEL:-"claude-sonnet-4-20250514"}
+          
+          jq -n \
+            --arg model "$MODEL" \
+            --arg prompt "$PROMPT" \
+            '{
+              model: $model,
+              max_tokens: 4096,
+              messages: [{
+                role: "user",
+                content: $prompt
+              }]
+            }' > api_request.json
+          
+          curl -s https://api.anthropic.com/v1/messages \
+            -H "content-type: application/json" \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -d @api_request.json | jq -r '.content[0].text' > review.md || \
+            echo "Review generation failed" > review.md
+
+      - name: Post review
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const review = fs.readFileSync('review.md', 'utf8');
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: review
+            });
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-review
+          path: |
+            review.md
+            review_prompt.txt
+          retention-days: 30
